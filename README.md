@@ -1,4 +1,20 @@
-# Browser Bot MCP
+<div align="center">
+
+<img src="assets/banner.svg" alt="Browser Bot MCP — Local-first browser automation" width="100%">
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
+![MCP](https://img.shields.io/badge/Protocol-MCP-6366f1?style=flat-square)
+![Node.js](https://img.shields.io/badge/Node.js-24.21%2B-339933?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Experimental-f59e0b?style=flat-square)
+
+**Describe a web task once. Replay the integration locally.**
+
+[Quick start](#install) · [MCP setup](#add-it-to-your-mcp-client) · [Tools](#the-tools) · [Architecture](#how-it-works)
+
+</div>
+
+> [!WARNING]
+> Experimental safety checkpoint. Use only public, non-sensitive read tasks. Write authorization, credential handling and real-browser validation are not production-ready.
 
 `browser-bot` is a local [MCP](https://modelcontextprotocol.io) server that gives an agent one
 capability: **do a task on a website**. You give it a URL and the task in plain language. The
@@ -15,23 +31,22 @@ That is the whole idea, and it is the point of Pomerado: a browser agent that re
 step is slow, expensive and flaky on the fifth run. A saved integration clicks the same things
 in the same order every time, and its source is on disk for you to read.
 
-Free and local: the minter, the browser, the saved integrations. No Pomerado account is needed.
+Local components: the minter, the browser, the saved integrations. No Pomerado account is needed.
 Minting calls OpenAI, so it needs `OPENAI_API_KEY`; running an integration does not.
 
 ---
 
-## What it can and cannot do
+## What it is designed to do
 
-| | |
+| Capability | Status |
 |---|---|
-| **Works** | Reading pages, search results, prices, dashboards, tables, pagination; filling and submitting forms; carts, bookings, drafts; sites behind a login and a two-factor code (you type them at the prompt) |
-| **Needs your input** | Logins, one-time codes, choices the site offers, anything the build is unsure about. The job stops and asks; you answer with `provide_input` |
-| **Cannot** | Bypass bot protection or CAPTCHAs (the open-source core drives a plain local Chromium), write anything on a site that refuses automation, keep a session between calls (a sign-in is replayed per call, and no credential is saved) |
-| **Not a general-purpose clicker** | Pomerado does not drive a live browser on your behalf for arbitrary tasks on every call; it builds one integration per task and replays it. A task that changes every single time is a poor fit |
+| Read public pages, search results and tables | Intended read-only use |
+| Mint and replay task-specific integrations | Real Pomerado validation pending |
+| Forms, purchases and other writes | Disabled in the intended safety configuration; enforcement requires verification |
+| Authentication and one-time codes | Not recommended until secret handling is validated |
+| CAPTCHA bypass | Not supported |
 
-Each mint gets 20 minutes of active work, and one integration covers one site plus one task.
-`browser_do` reuses the integration whose site matches, and asks for a new one when the request
-would need a different authority (read vs write).
+Each mint has a 20-minute active-work budget. Reuse must be scoped to the URL, task and authority.
 
 ---
 
@@ -91,7 +106,7 @@ The server is a stdio MCP server. Use an **absolute** path for the script and fo
   "mcpServers": {
     "browser-bot": {
       "command": "node",
-      "args": ["/absolute/path/to/superspear/packages/browser-bot/bin/browser-bot.mjs"],
+      "args": ["/absolute/path/to/browser-bot-mcp/bin/browser-bot.mjs"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "BROWSER_BOT_ROOT": "/absolute/path/to/browser-bot/integrations"
@@ -139,14 +154,7 @@ output: { title: "Programming Rust", price: "€39.90" }
 integration: { integration: books_example_com, authority: read, directory: … }
 ```
 
-The next call for that site is a replay: no model, no key, usually seconds. A task that changes
-something must say so, and the agent has to record your approval:
-
-> Add "Programming Rust" to the cart on https://books.example.com (that's a write, go ahead)
-
-→ `browser_do { authority: "write", approved_by_user: true }`. Without that flag the bot refuses
-before touching the site. A write's result also says whether the change was confirmed, and never
-retries on its own: read the site back before sending it again.
+A matching saved integration is intended to replay without a model call. Do not use write tasks in this checkpoint.
 
 ### The tools
 
@@ -164,8 +172,7 @@ retries on its own: read the site back before sending it again.
 | `cancel_job` | Stop a job and close its browser |
 
 The three `browser_*` work tools return a job view at once, or the finished result when it
-lands within `wait_seconds` (default 20). A failed job comes back as an error result, with its
-`code`, `write_status`, `possible_commit` and `retry` fields intact.
+lands within `wait_seconds` (default 20). A failed job returns an error result. Structured write-status propagation still requires validation.
 
 ### The command line
 
@@ -176,8 +183,6 @@ node bin/browser-bot.mjs do --url https://example.com --task "read the main head
 node bin/browser-bot.mjs list
 node bin/browser-bot.mjs describe example_com
 node bin/browser-bot.mjs run example_com --input '{"query":"rust"}'
-node bin/browser-bot.mjs do --url https://shop.example.com/cart \
-  --task "add the first product" --authority write --approved
 ```
 
 Questions are asked on the terminal, in the answer shapes Pomerado expects; a password is read
@@ -187,24 +192,18 @@ with echo off.
 
 ## Safety and privacy
 
-- **Read by default.** `authority` defaults to `read`; a write needs `approved_by_user: true`,
-  which the server description tells the agent to set only after your explicit approval.
-- **Nothing is written twice.** A write returns a job; `get_job` observes it and never resubmits.
-  When Pomerado says an action may have landed, the bot says so instead of retrying.
-- **Secrets are not stored.** Login answers go through `provide_input` (visible to the
-  conversation and its model provider) into Pomerado's run, and are saved nowhere. Ask for a
-  fresh code on the next call.
-- **No source is rewritten.** The bot only writes new folders and archives old ones; the
-  integration's code is exactly what Pomerado's Guardian reviewed.
-- **The key stays in the environment.** It is passed to the minter's process, never logged and
-  never a tool argument.
+- Use public, non-sensitive read tasks only until authorization enforcement is verified.
+- Never send passwords or one-time codes through chat or MCP tool arguments.
+- Pin a reviewed Pomerado version before installing or executing it.
+- Keep API keys in the local environment, not in committed configuration.
+- Do not retry an uncertain external action automatically.
 
 ## How it works
 
 ```
 browser-bot (this MCP server)
    │  browser_do
-   ├── integration exists for the site?  ── yes ─► run it
+   ├── matching URL, task and authority?  ── yes ─► run it
    │                                          (spawn `pomerado-mcp serve --artifact <dir>`)
    └── no ─► mint it
               (spawn `pomerado-mcp mint --root <root>`, follow the job, relay its questions)
@@ -243,10 +242,9 @@ stream, and a new Pomerado release does not change the bot's contract.
 
 - Jobs live in the bot's process: restarting the client ends them. A write that may have landed
   stays unconfirmed, which is why the bot never replays one.
-- A mint costs model tokens and takes minutes; a run costs nothing. Prefer `browser_run` once an
+- A mint costs model tokens and takes minutes; a replay does not require model tokens. Prefer `browser_run` once an
   integration exists, and `browser_do` when you are not sure it does.
-- One integration per site and authority. A read-only integration for a site never silently
-  becomes a write one: you get a new folder (`<site>_write`) or an explicit `integration_mismatch`.
+- Reuse is intended to match URL, task and authority; regression validation is pending.
 - The integration folder names its own runtime, which is why `BROWSER_BOT_RUN_MODE=pomerado-mcp`
   is the default: a cached `npx` install can move without breaking your saved integrations.
 
@@ -271,4 +269,4 @@ work, the Guardian review and the integration runtime are theirs. See
 
 ## Local safety checkpoint
 
-Write operations and artifact launchers are disabled pending trusted authorization. Reuse requires exact URL, intent and effect. Full MCP and real Pomerado tests are pending dependency installation. This is not a production release.
+The intended safety policy disables writes and artifact launchers and scopes reuse to URL, intent and effect. Enforcement still requires regression validation. Full MCP and real Pomerado tests are pending dependency installation. This is not a production release.
